@@ -12,6 +12,8 @@ namespace SteamTopSellers
         public const string GET_GAMES_LIST_URL = "https://api.steampowered.com/IStoreQueryService/Query/v1/";
         public const string GET_GAME_INFO_URL = "https://store.steampowered.com/api/appdetails?appids=";
 
+        public static int rowsToDisplay = 10;
+
         private static readonly HttpClient client = new HttpClient();
 
         static async Task Main(string[] args)
@@ -19,21 +21,24 @@ namespace SteamTopSellers
             string gamesListQueryParams = "{\"query\":{\"count\":\"15\",\"sort\":\"10\"},\"context\":{\"country_code\":\"RU\"}}";
             string gamesListQuery = $"{GET_GAMES_LIST_URL}?input_json={Uri.EscapeDataString(gamesListQueryParams)}";
 
-            List<int> gameIds = await GetGamesIds(gamesListQuery);
+            List<int> gameIds = await GetTopSellingsList(gamesListQuery);
 
-            foreach (var id in gameIds)
+            for (int i = 0; i < rowsToDisplay; i++)
             {
-                Console.WriteLine(id);
+                int gameId = gameIds[i];
+
+                GameInfo gameInfo = await GetGameInfo(GET_GAME_INFO_URL, gameId);
+                Console.WriteLine(i + 1);
+                Console.WriteLine(gameInfo.Name);
+                Console.WriteLine(gameInfo.FormattedPrice);
             }
 
             Console.ReadKey();
         }
 
-        static async Task<List<int>> GetGamesIds(string url)
+        static async Task<List<int>> GetTopSellingsList(string url)
         {
-            //GetResponseContent
             string responseBody = await GetResponseContent(url);
-            //Parse JSON with TopSellers IDs
             var responseObject = JsonSerializer.Deserialize<GameIdsRoot>(responseBody);
 
             List<int> result = new List<int>();
@@ -46,13 +51,27 @@ namespace SteamTopSellers
             }
 
             return result;
-            
         }
 
+        static async Task<GameInfo> GetGameInfo(string url, int gameId)
+        {
+            string gameInfoQuery = $"{url}{gameId}&cc=RU";
+            string responseBody = await GetResponseContent(gameInfoQuery);
 
-        //static async Task<string> GetGameInfo()
-        //GetResponseContent
-        //Deserialize JSON with Game Info by appId
+            var gameInfoResponse = JsonSerializer.Deserialize<Dictionary<string, GameInfoRoot>>(responseBody);
+
+            if(gameInfoResponse[gameId.ToString()].Data != null)
+            {
+                return new GameInfo
+                {
+                    Name = gameInfoResponse[gameId.ToString()].Data.Name,
+                    FormattedPrice = gameInfoResponse[gameId.ToString()].Data.IsFree ? "Free to Play" : gameInfoResponse[gameId.ToString()].Data.PriceOverview.FinalFormatted,
+                };
+            }
+
+            return null;
+
+        }
 
         static async Task<string> GetResponseContent(string url)
         {
@@ -62,6 +81,7 @@ namespace SteamTopSellers
             return responseBody;
         }
 
+        //GamesList
         public class GameIdsRoot
         {
             [JsonPropertyName("response")]
@@ -80,5 +100,35 @@ namespace SteamTopSellers
             public int? AppId { get; set; }
         }
 
+        //GameInfo
+        public class GameInfoRoot
+        {
+            [JsonPropertyName("data")]
+            public GameInfoData Data { get; set; }
+        }
+
+        public class GameInfoData
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("is_free")]
+            public bool IsFree { get; set; }
+
+            [JsonPropertyName("price_overview")]
+            public GamePriceOverview PriceOverview { get; set; }
+        }
+
+        public class GamePriceOverview
+        {
+            [JsonPropertyName("final_formatted")]
+            public string FinalFormatted { get; set; }
+        }
+
+        public class GameInfo
+        {
+            public string Name { get; set; }
+            public string FormattedPrice { get; set; }
+        }
     }
 }
