@@ -2,48 +2,72 @@
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using SteamTopSellers.Models;
 
 namespace SteamTopSellers
 {
     internal class Program
     {
-        public const string GET_GAMES_LIST_URL = "https://api.steampowered.com/IStoreQueryService/Query/v1/";
-        public const string GET_GAME_INFO_URL = "https://store.steampowered.com/api/appdetails?appids=";
-
-        public static int rowsToDisplay = 10;
+        private const string GetGamesListUrl = "https://api.steampowered.com/IStoreQueryService/Query/v1/";
+        private const string GetGameInfoUrl = "https://store.steampowered.com/api/appdetails?appids=";
+        private const int GamesToDisplay = 10;
 
         private static readonly HttpClient client = new HttpClient();
 
         static async Task Main(string[] args)
         {
-            string gamesListQueryParams = "{\"query\":{\"count\":\"15\",\"sort\":\"10\"},\"context\":{\"country_code\":\"RU\"}}";
-            string gamesListQuery = $"{GET_GAMES_LIST_URL}?input_json={Uri.EscapeDataString(gamesListQueryParams)}";
-
-            List<int> gameIds = await GetTopSellingsList(gamesListQuery);
-
-            for (int i = 0; i < rowsToDisplay; i++)
+            try
             {
-                int gameId = gameIds[i];
+                List<int> gameIds = await GetTopSellingsListAsync();
 
-                GameInfo gameInfo = await GetGameInfo(GET_GAME_INFO_URL, gameId);
-                Console.WriteLine(i + 1);
-                Console.WriteLine(gameInfo.Name);
-                Console.WriteLine(gameInfo.FormattedPrice);
+
+                Console.WriteLine("10 самых продаваемых игр на текущий момент по объёму выручки Steam (РФ)\n");
+                for (int i = 0; i < GamesToDisplay; i++)
+                {
+                    if(i >= gameIds.Count)
+                    {
+                        Console.WriteLine($"{i + 1}. ....");
+                        continue;
+                    }
+
+                    int gameId = gameIds[i];
+
+                    GameDetails gameDetails = await GetGameInfoAsync(gameId);
+
+                    Console.WriteLine($"{i + 1}. {gameDetails.Name}");
+                    Console.WriteLine(gameDetails.FormattedPrice);
+                    Console.WriteLine();
+                }
+            } 
+            catch (HttpRequestException e)
+            {
+                Console.WriteLine($"Request error: {e.Message}");
+            }
+            catch (JsonException e)
+            {
+                Console.WriteLine($"JSON error: {e.Message}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"Unexpected error: {e.Message}");
             }
 
+            Console.WriteLine("\nPress any key...");
             Console.ReadKey();
         }
 
-        static async Task<List<int>> GetTopSellingsList(string url)
+        static async Task<List<int>> GetTopSellingsListAsync()
         {
-            string responseBody = await GetResponseContent(url);
+            string gamesListQueryParams = "{\"query\":{\"count\":\"15\",\"sort\":\"10\"},\"context\":{\"country_code\":\"RU\"}}";
+            string gamesListQuery = $"{GetGamesListUrl}?input_json={Uri.EscapeDataString(gamesListQueryParams)}";
+
+            string responseBody = await GetResponseContentAsync(gamesListQuery);
             var responseObject = JsonSerializer.Deserialize<GameIdsRoot>(responseBody);
 
             List<int> result = new List<int>();
 
-            if(responseObject.Response.Ids != null)
+            if(responseObject?.Response?.Ids != null)
             {
                 foreach (var id in responseObject.Response.Ids)
                     if(id.AppId.HasValue)
@@ -53,82 +77,40 @@ namespace SteamTopSellers
             return result;
         }
 
-        static async Task<GameInfo> GetGameInfo(string url, int gameId)
+        static async Task<GameDetails> GetGameInfoAsync(int gameId)
         {
-            string gameInfoQuery = $"{url}{gameId}&cc=RU";
-            string responseBody = await GetResponseContent(gameInfoQuery);
+            string gameInfoQuery = $"{GetGameInfoUrl}{gameId}&cc=RU";
+            string responseBody = await GetResponseContentAsync(gameInfoQuery);
 
             var gameInfoResponse = JsonSerializer.Deserialize<Dictionary<string, GameInfoRoot>>(responseBody);
 
-            if(gameInfoResponse[gameId.ToString()].Data != null)
+            if (gameInfoResponse.TryGetValue(gameId.ToString(), out var gameInfo) && gameInfo.Success)
             {
-                return new GameInfo
+                var data = gameInfo.Data;
+                return new GameDetails
                 {
-                    Name = gameInfoResponse[gameId.ToString()].Data.Name,
-                    FormattedPrice = gameInfoResponse[gameId.ToString()].Data.IsFree ? "Free to Play" : gameInfoResponse[gameId.ToString()].Data.PriceOverview.FinalFormatted,
+                    Name = data.Name,
+                    FormattedPrice = data.IsFree ? "Free to Play" : data.PriceOverview.FinalFormatted,
                 };
             }
-
-            return null;
-
+            else
+            {
+                throw new Exception("Error retrieving game data");
+            }
         }
 
-        static async Task<string> GetResponseContent(string url)
+        static async Task<string> GetResponseContentAsync(string url)
         {
             HttpResponseMessage response = await client.GetAsync(url);
             string responseBody = await response.Content.ReadAsStringAsync();
 
+            if(!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"{response.StatusCode}");
+            }
+
             return responseBody;
         }
 
-        //GamesList
-        public class GameIdsRoot
-        {
-            [JsonPropertyName("response")]
-            public GameIdsResponse Response { get; set; }
-        }
-
-        public class GameIdsResponse
-        {
-            [JsonPropertyName("ids")]
-            public List<GameId> Ids { get; set; }
-        }
-
-        public class GameId
-        {
-            [JsonPropertyName("appid")]
-            public int? AppId { get; set; }
-        }
-
-        //GameInfo
-        public class GameInfoRoot
-        {
-            [JsonPropertyName("data")]
-            public GameInfoData Data { get; set; }
-        }
-
-        public class GameInfoData
-        {
-            [JsonPropertyName("name")]
-            public string Name { get; set; }
-
-            [JsonPropertyName("is_free")]
-            public bool IsFree { get; set; }
-
-            [JsonPropertyName("price_overview")]
-            public GamePriceOverview PriceOverview { get; set; }
-        }
-
-        public class GamePriceOverview
-        {
-            [JsonPropertyName("final_formatted")]
-            public string FinalFormatted { get; set; }
-        }
-
-        public class GameInfo
-        {
-            public string Name { get; set; }
-            public string FormattedPrice { get; set; }
-        }
     }
 }
